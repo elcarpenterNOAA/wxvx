@@ -13,6 +13,7 @@ from typing import cast
 from unittest.mock import ANY, patch
 
 import pandas as pd
+import plotly  # type: ignore[import]
 import xarray as xr
 from iotaa import Node, asset, external, ready, refs
 from pytest import fixture, mark
@@ -243,11 +244,12 @@ def test_workflow__plot(c, dictkey, fakefs, fs):
     with (
         patch.object(workflow, "_statreqs") as _statreqs,
         patch.object(workflow, "_prepare_plot_data") as _prepare_plot_data,
-        patch("matplotlib.pyplot.xticks") as xticks,
+        patch.object(plotly.graph_objs.Figure, "update_layout") as update_layout,
+        patch.object(plotly.graph_objs.Figure, "write_image") as write_image,
     ):
         _statreqs.return_value = [_stat("model1"), _stat("model2")]
         _prepare_plot_data.side_effect = dfs
-        os.environ["MPLCONFIGDIR"] = str(fakefs)
+        write_image.side_effect = lambda path: (fakefs / path).touch()
         val = workflow._plot(
             c=c, varname=varname, level=level, cycle=cycles[0], stat=stat, width=width
         )
@@ -255,7 +257,9 @@ def test_workflow__plot(c, dictkey, fakefs, fs):
     assert ready(val)
     assert path.is_file()
     assert _prepare_plot_data.call_count == 1
-    xticks.assert_called_once_with(ticks=[0, 6, 12], labels=["000", "006", "012"], rotation=90)
+    args, kwargs = update_layout.call_args
+    assert kwargs["xaxis"]["tickvals"] == ["000", "006", "012"]
+    write_image.assert_called_once_with(str(path), format="png")
 
 
 def test_workflow__stat(c, fakefs, tc):

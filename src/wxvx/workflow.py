@@ -12,12 +12,8 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 from warnings import catch_warnings, simplefilter
 
-import matplotlib as mpl
-
-mpl.use("Agg")
-import matplotlib.pyplot as plt
 import pandas as pd
-import seaborn as sns
+import plotly.express as px  # type: ignore[import]
 import xarray as xr
 from iotaa import Node, asset, external, refs, task, tasks
 
@@ -193,6 +189,45 @@ def _polyfile(path: Path, mask: tuple[tuple[float, float]]):
         tmp.write_text(content)
 
 
+# @task
+# def _plot(
+#     c: Config, cycle: datetime, varname: str, level: float | None, stat: str, width: int | None
+# ):
+#     meta = _meta(c, varname)
+#     var = _var(c, varname, level)
+#     desc = meta.description.format(level=var.level)
+#     cyclestr = f"{yyyymmdd(cycle)} {hh(cycle)}Z"
+#     taskname = f"Plot {desc}{' width ' + str(width) if width else ''} {stat} at {cyclestr}"
+#     yield taskname
+#     rundir = c.paths.run / "plots" / yyyymmdd(cycle) / hh(cycle)
+#     plot_fn = rundir / f"{var}_{stat}{'_width_' + str(width) if width else ''}_plot.png"
+#     yield asset(plot_fn, plot_fn.is_file)
+#     reqs = _statreqs(c, varname, level, cycle)
+#     yield reqs
+#     leadtimes = [
+#         "%03d" % (td.total_seconds() // 3600)
+#         for td in gen_leadtimes(
+#             start=c.leadtimes.start, step=c.leadtimes.step, stop=c.leadtimes.stop
+#         )
+#     ]
+#     plot_data = _prepare_plot_data(reqs, stat, width)
+#     sns.set(style="darkgrid")
+#     plt.figure(figsize=(10, 6), constrained_layout=True)
+#     hue = "LABEL" if "LABEL" in plot_data.columns else "MODEL"
+#     sns.lineplot(data=plot_data, x="FCST_LEAD", y=stat, hue=hue, marker="o", linewidth=2)
+#     w = f"(width={width}) " if width else ""
+#     plt.title(
+#         "%s %s %s%s vs %s at %s" % (desc, stat, w, c.forecast.name, c.baseline.name, cyclestr)
+#     )
+#     plt.xlabel("Leadtime")
+#     plt.ylabel(f"{stat} ({meta.units})")
+#     plt.xticks(ticks=[int(lt) for lt in leadtimes], labels=leadtimes, rotation=90)
+#     plt.legend(title="Model", bbox_to_anchor=(1.02, 1), loc="upper left")
+#     plot_fn.parent.mkdir(parents=True, exist_ok=True)
+#     plt.savefig(plot_fn, bbox_inches="tight")
+#     plt.close()
+
+
 @task
 def _plot(
     c: Config, cycle: datetime, varname: str, level: float | None, stat: str, width: int | None
@@ -215,21 +250,36 @@ def _plot(
         )
     ]
     plot_data = _prepare_plot_data(reqs, stat, width)
-    sns.set(style="darkgrid")
-    plt.figure(figsize=(10, 6), constrained_layout=True)
     hue = "LABEL" if "LABEL" in plot_data.columns else "MODEL"
-    sns.lineplot(data=plot_data, x="FCST_LEAD", y=stat, hue=hue, marker="o", linewidth=2)
-    w = f"(width={width}) " if width else ""
-    plt.title(
-        "%s %s %s%s vs %s at %s" % (desc, stat, w, c.forecast.name, c.baseline.name, cyclestr)
+    plot_data["FCST_LEAD"] = plot_data["FCST_LEAD"].apply(lambda x: f"{int(x):03d}")
+    fig = px.line(
+        plot_data,
+        x="FCST_LEAD",
+        y=stat,
+        color=hue,
+        color_discrete_sequence=px.colors.qualitative.Vivid,
+        markers=True,
+        title="%s %s %s%s vs %s at %s"
+        % (
+            desc,
+            stat,
+            f"(width={width}) " if width else "",
+            c.forecast.name,
+            c.baseline.name,
+            cyclestr,
+        ),
+        labels={"FCST_LEAD": "Leadtime", stat: f"{stat} ({meta.units})", hue: "Model"},
     )
-    plt.xlabel("Leadtime")
-    plt.ylabel(f"{stat} ({meta.units})")
-    plt.xticks(ticks=[int(lt) for lt in leadtimes], labels=leadtimes, rotation=90)
-    plt.legend(title="Model", bbox_to_anchor=(1.02, 1), loc="upper left")
+    fig.update_layout(
+        width=1000,
+        height=600,
+        font=dict(size=16),
+        title=dict(text=fig.layout.title.text, x=0.5, xanchor="center", font=dict(size=20)),
+        legend_title_text="Model",
+        xaxis=dict(tickmode="array", tickvals=leadtimes, tickangle=90),
+    )
     plot_fn.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(plot_fn, bbox_inches="tight")
-    plt.close()
+    fig.write_image(str(plot_fn), format="png")
 
 
 @task
