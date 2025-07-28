@@ -15,7 +15,7 @@ from unittest.mock import ANY, Mock, patch
 import pandas as pd
 import xarray as xr
 from iotaa import Node, asset, external, ready
-from pytest import fixture, mark
+from pytest import fixture, mark, raises
 
 from wxvx import variables, workflow
 from wxvx.times import TimeCoords, gen_validtimes
@@ -112,6 +112,27 @@ def test_workflow_stats(c, noop):
     assert len(val.ref) == len(c.variables) + 1  # for 2x SPFH levels
 
 
+CASES = [
+    ("http://x/y/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "remote"),
+    ("file://{root}/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "local"),
+    ("{root}/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "local"),
+]
+
+
+@mark.parametrize(("template", "expected_kind"), CASES, ids=["remote", "file-url", "plain-path"])
+def test_workflow__classify_url(template, expected_kind, tmp_path):
+    url = template.format(root=tmp_path.as_posix(), hh="00", fh=0)
+    kind, _ = workflow._classify_url(url)
+    assert kind == expected_kind
+
+
+def test_workflow__classify_url_unsupported(tmp_path):
+    file = f"ftp://{tmp_path.as_posix()}/gfs.t00z.pgrb2.0p25.f000"
+    with raises(workflow.WXVXError) as excinfo:
+        workflow._classify_url(file)
+    assert "not supported" in str(excinfo.value)
+
+
 def test_workflow__existing(fakefs):
     path = fakefs / "forecast"
     assert not ready(workflow._existing(path=path))
@@ -202,6 +223,21 @@ def test_workflow__grid_grib(c, tc):
     _grib_index_data.assert_called_with(c, outdir, tc, url=url)
 
 
+@mark.parametrize(
+    "template",
+    ["{root}/gfs.t00z.pgrb2.0p25.f000", "file://{root}/gfs.t00z.pgrb2.0p25.f000"],
+    ids=["plain", "file-url"],
+)
+def test_workflow__grid_grib_local(template, config_data, gen_config, fakefs, tc):
+    grib_path = fakefs / "gfs.t00z.pgrb2.0p25.f000"
+    grib_path.write_text("foo")
+    config_data["baseline"]["url"] = template.format(root=fakefs, hh="00", fh=0)
+    c = gen_config(config_data, fakefs)
+    var = variables.Var(name="t", level_type="isobaricInhPa", level=900)
+    val = workflow._grid_grib(c=c, tc=tc, var=var)
+    assert ready(val)
+
+
 def test_workflow__grid_nc(c_real_fs, check_cf_metadata, da_with_leadtime, tc):
     level = 900
     var = variables.Var(name="gh", level_type="isobaricInhPa", level=level)
@@ -211,6 +247,13 @@ def test_workflow__grid_nc(c_real_fs, check_cf_metadata, da_with_leadtime, tc):
     val = workflow._grid_nc(c=c_real_fs, varname="HGT", tc=tc, var=var)
     assert ready(val)
     check_cf_metadata(ds=xr.open_dataset(val.ref, decode_timedelta=True), name="HGT", level=level)
+
+
+def test_workflow__local_grib(tmp_path):
+    grib_path = tmp_path / "test.grib2"
+    assert not ready(workflow._local_grib(path=grib_path))
+    grib_path.write_text("foo")
+    assert ready(workflow._local_grib(path=grib_path))
 
 
 def test_workflow__polyfile(fakefs):

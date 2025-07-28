@@ -26,7 +26,7 @@ from wxvx.metconf import render
 from wxvx.net import fetch
 from wxvx.times import TimeCoords, gen_validtimes, hh, tcinfo, yyyymmdd
 from wxvx.types import Cycles, Source
-from wxvx.util import LINETYPE, atomic, mpexec
+from wxvx.util import LINETYPE, WXVXError, atomic, mpexec
 from wxvx.variables import VARMETA, Var, da_construct, da_select, ds_construct, metlevel
 
 if TYPE_CHECKING:
@@ -164,8 +164,12 @@ def _grid_grib(c: Config, tc: TimeCoords, var: Var):
     path = outdir / f"{var}.grib2"
     taskname = "Baseline grid %s" % path
     yield taskname
-    yield asset(path, path.is_file)
     url = c.baseline.url.format(yyyymmdd=yyyymmdd, hh=hh, fh=int(leadtime))
+    kind, src = _classify_url(url)
+    if kind == "local":
+        yield asset(Path(src), Path(src).is_file)
+        yield _local_grib(Path(src))
+    yield asset(path, path.is_file)
     idxdata = _grib_index_data(c, outdir, tc, url=f"{url}.idx")
     yield idxdata
     var_idxdata = idxdata.ref[str(var)]
@@ -189,6 +193,12 @@ def _grid_nc(c: Config, varname: str, tc: TimeCoords, var: Var):
     with atomic(path) as tmp:
         ds.to_netcdf(tmp, encoding={varname: {"zlib": True, "complevel": 9}})
     logging.info("%s: Wrote %s", taskname, path)
+
+
+@external
+def _local_grib(path: Path):
+    yield f"Existing local GRIB {path}"
+    yield asset(path, path.is_file)
 
 
 @task
@@ -273,6 +283,17 @@ def _stat(c: Config, varname: str, tc: TimeCoords, var: Var, prefix: str, source
 
 
 # Support
+
+
+def _classify_url(url: str) -> tuple[str, str | Path]:
+    p = urlparse(url)
+    scheme = (p.scheme or "").lower()
+    if scheme in {"http", "https"}:
+        return "remote", url
+    if scheme in {"file", ""}:
+        return "local", Path(p.path if scheme else url)
+    msg = f"Scheme '{scheme}' in '{p.path}' not supported"
+    raise WXVXError(msg)
 
 
 def _grid_stat_config(
