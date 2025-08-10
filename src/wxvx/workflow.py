@@ -173,7 +173,7 @@ def _grid_grib(c: Config, tc: TimeCoords, var: Var):
 
     def remote():
         idx = _grib_index_data(c, outdir, tc, url=f"{url}.idx")
-        return path, idx, lambda: _remote_grib(idx, var, url, taskname, path)
+        return path, idx, lambda: _remote_grib(idx, path, taskname, url, var)
 
     asset_path, reqs, action = {
         "local": local,
@@ -367,7 +367,7 @@ def _prepare_plot_data(reqs: Sequence[Node], stat: str, width: int | None) -> pd
     return plot_data
 
 
-def _remote_grib(idxdata, var: Var, url: str, taskname: str, path: Path):
+def _remote_grib(idxdata: Node, path: Path, taskname: str, url: str, var: Var):
     var_idx = idxdata.ref[str(var)]
     fb, lb = var_idx.firstbyte, var_idx.lastbyte
     headers = {"Range": "bytes=%s" % (f"{fb}-{lb}" if lb else fb)}
