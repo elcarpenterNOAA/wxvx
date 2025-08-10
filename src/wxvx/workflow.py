@@ -169,13 +169,14 @@ def _grid_grib(c: Config, tc: TimeCoords, var: Var):
     if kind == "local":
         yield asset(Path(src), Path(src).is_file)
         yield _local_grib(Path(src))
-    yield asset(path, path.is_file)
-    idxdata = _grib_index_data(c, outdir, tc, url=f"{url}.idx")
-    yield idxdata
-    var_idxdata = idxdata.ref[str(var)]
-    fb, lb = var_idxdata.firstbyte, var_idxdata.lastbyte
-    headers = {"Range": "bytes=%s" % (f"{fb}-{lb}" if lb else fb)}
-    fetch(taskname, url, path, headers)
+    else:
+        yield asset(path, path.is_file)
+        idxdata = _grib_index_data(c, outdir, tc, url=f"{url}.idx")
+        yield idxdata
+        var_idxdata = idxdata.ref[str(var)]
+        fb, lb = var_idxdata.firstbyte, var_idxdata.lastbyte
+        headers = {"Range": "bytes=%s" % (f"{fb}-{lb}" if lb else fb)}
+        fetch(taskname, url, path, headers)
 
 
 @task
@@ -197,7 +198,8 @@ def _grid_nc(c: Config, varname: str, tc: TimeCoords, var: Var):
 
 @external
 def _local_grib(path: Path):
-    yield f"Existing local GRIB {path}"
+    taskname = "Existing local GRIB %s" % path
+    yield taskname
     yield asset(path, path.is_file)
 
 
