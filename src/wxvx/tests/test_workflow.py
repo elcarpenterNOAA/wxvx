@@ -249,13 +249,6 @@ def test_workflow__grid_nc(c_real_fs, check_cf_metadata, da_with_leadtime, tc):
     check_cf_metadata(ds=xr.open_dataset(val.ref, decode_timedelta=True), name="HGT", level=level)
 
 
-def test_workflow__local_grib(tmp_path):
-    grib_path = tmp_path / "test.grib2"
-    assert not ready(workflow._local_grib(path=grib_path))
-    grib_path.write_text("foo")
-    assert ready(workflow._local_grib(path=grib_path))
-
-
 def test_workflow__polyfile(fakefs):
     path = fakefs / "a.poly"
     assert not path.is_file()

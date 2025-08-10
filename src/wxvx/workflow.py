@@ -165,18 +165,24 @@ def _grid_grib(c: Config, tc: TimeCoords, var: Var):
     taskname = "Baseline grid %s" % path
     yield taskname
     url = c.baseline.url.format(yyyymmdd=yyyymmdd, hh=hh, fh=int(leadtime))
-    kind, src = _classify_url(url)
-    if kind == "local":
-        yield asset(Path(src), Path(src).is_file)
-        yield _local_grib(Path(src))
-    else:
-        yield asset(path, path.is_file)
-        idxdata = _grib_index_data(c, outdir, tc, url=f"{url}.idx")
-        yield idxdata
-        var_idxdata = idxdata.ref[str(var)]
-        fb, lb = var_idxdata.firstbyte, var_idxdata.lastbyte
-        headers = {"Range": "bytes=%s" % (f"{fb}-{lb}" if lb else fb)}
-        fetch(taskname, url, path, headers)
+    url_type, src = _classify_url(url)
+
+    def local():
+        p = Path(src)
+        return p, _existing(p), None
+
+    def remote():
+        idx = _grib_index_data(c, outdir, tc, url=f"{url}.idx")
+        return path, idx, lambda: remote_setup(idx, var, url, taskname, path)
+
+    asset_path, reqs, action = {
+        "local": local,
+        "remote": remote,
+    }[url_type]()
+
+    yield asset(asset_path, asset_path.is_file)
+    yield reqs
+    action and action()
 
 
 @task
@@ -194,13 +200,6 @@ def _grid_nc(c: Config, varname: str, tc: TimeCoords, var: Var):
     with atomic(path) as tmp:
         ds.to_netcdf(tmp, encoding={varname: {"zlib": True, "complevel": 9}})
     logging.info("%s: Wrote %s", taskname, path)
-
-
-@external
-def _local_grib(path: Path):
-    taskname = "Existing local GRIB %s" % path
-    yield taskname
-    yield asset(path, path.is_file)
 
 
 @task
@@ -294,7 +293,7 @@ def _classify_url(url: str) -> tuple[str, str | Path]:
         return "remote", url
     if scheme in {"file", ""}:
         return "local", Path(p.path if scheme else url)
-    msg = f"Scheme '{scheme}' in '{p.path}' not supported"
+    msg = f"Scheme '{scheme}' in '{p.path}' not supported."
     raise WXVXError(msg)
 
 
@@ -366,6 +365,13 @@ def _prepare_plot_data(reqs: Sequence[Node], stat: str, width: int | None) -> pd
     if "INTERP_PNTS" in columns and width is not None:
         plot_data = plot_data[plot_data["INTERP_PNTS"] == width**2]
     return plot_data
+
+
+def remote_setup(idxdata, var: Var, url: str, taskname: str, path: Path):
+    var_idx = idxdata.ref[str(var)]
+    fb, lb = var_idx.firstbyte, var_idx.lastbyte
+    headers = {"Range": "bytes=%s" % (f"{fb}-{lb}" if lb else fb)}
+    fetch(taskname, url, path, headers)
 
 
 def _statargs(
