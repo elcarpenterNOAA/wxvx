@@ -291,6 +291,16 @@ def test_workflow__plot(c, dictkey, fakefs, fs):
     xticks.assert_called_once_with(ticks=[0, 6, 12], labels=["000", "006", "012"], rotation=90)
 
 
+def test_workflow__remote_grib(tmp_path):
+    var = Var("t", "isobaricInhPa", 900)
+    idxdata = Mock(spec=Node)
+    idxdata.ref = {str(var): Mock(firstbyte=1, lastbyte=2)}
+    path = tmp_path / "out.grib2"
+    with patch.object(workflow, "fetch") as fetch:
+        workflow._remote_grib(idxdata, path, "task", "url", var)
+    fetch.assert_called_once_with("task", "url", path, {"Range": "bytes=1-2"})
+
+
 def test_workflow__stat(c, fakefs, tc):
     @external
     def mock(*_args, **_kwargs):
