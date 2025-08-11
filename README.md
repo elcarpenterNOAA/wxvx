@@ -268,7 +268,7 @@ Verification will be limited to points within the bounding box given by `mask`.
 
 The forecast will be called `ML` in MET `.stat` files and in plots.
 
-It will be verified against `HRRR` analysis, which can be found in GRIB files located either remotely (e.g. in an AWS bucket) or locally (either `file://` URL or plain filesystem path), given as the `baseline.url` value, where `yyyymmdd`, `hh`, and `fh` will be filled in by `wxvx`. (The `yyyymmdd` and `hh` values are strings like `20250523` and `06`, while `fh` is an `int` value to be formatted as needed.)
+It will be verified against `HRRR` analysis, which can be found in GRIB files located either remotely (e.g. in an AWS bucket) or locally (via `file://` URL or plain filesystem path), given as the `baseline.url` value, where `yyyymmdd`, `hh`, and `fh` will be filled in by `wxvx`. (The `yyyymmdd` and `hh` values are strings like `20250523` and `06`, while `fh` is an `int` value to be formatted as needed.)
 
 24 1-hourly cycles starting at 2025-03-01 00Z, each with forecast leadtimes 3, 6, and 9, will be verified.
 
