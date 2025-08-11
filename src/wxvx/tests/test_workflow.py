@@ -173,7 +173,7 @@ def test_workflow__grib_index_file(c):
 def test_workflow__grid_grib_local(template, config_data, gen_config, fakefs, tc):
     grib_path = fakefs / "gfs.t00z.pgrb2.0p25.f000"
     grib_path.write_text("foo")
-    config_data["baseline"]["url"] = template.format(root=fakefs, hh="00", fh=0)
+    config_data["baseline"]["url"] = template.format(root=fakefs)
     c = gen_config(config_data, fakefs)
     var = variables.Var(name="t", level_type="isobaricInhPa", level=900)
     val = workflow._grid_grib(c=c, tc=tc, var=var)
