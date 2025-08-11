@@ -309,14 +309,14 @@ def test_workflow__stat(c, fakefs, tc):
         ("{root}/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "local"),
     ],
 )
-def test_workflow__classify_url(template, expected_scheme, tmp_path):
-    url = template.format(root=tmp_path.as_posix(), hh="00", fh=0)
+def test_workflow__classify_url(template, expected_scheme, fakefs):
+    url = template.format(root=fakefs, hh="00", fh=0)
     scheme, _ = workflow._classify_url(url)
     assert scheme == expected_scheme
 
 
-def test_workflow__classify_url_unsupported(tmp_path):
-    url = f"foo://{tmp_path.as_posix()}/gfs.t00z.pgrb2.0p25.f000"
+def test_workflow__classify_url_unsupported(fakefs):
+    url = f"foo://{fakefs}/gfs.t00z.pgrb2.0p25.f000"
     with raises(workflow.WXVXError) as e:
         workflow._classify_url(url)
     assert str(e.value) == f"Scheme 'foo' in '{url}' not supported."
@@ -364,10 +364,10 @@ def test_workflow__prepare_plot_data(dictkey):
         assert tdf["INTERP_PNTS"].eq(width**2).all()
 
 
-def test_workflow__remote_grib(tmp_path):
+def test_workflow__remote_grib(fakefs):
     var = Var("t", "isobaricInhPa", 900)
     idxdata = Mock(ref={str(var): Mock(firstbyte=1, lastbyte=2)})
-    path = tmp_path / "foo.grib2"
+    path = fakefs / "foo.grib2"
     with patch.object(workflow, "fetch") as fetch:
         workflow._remote_grib(idxdata, path, "task", "url", var)
     fetch.assert_called_once_with("task", "url", path, {"Range": "bytes=1-2"})
