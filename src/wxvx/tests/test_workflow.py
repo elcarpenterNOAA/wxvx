@@ -369,8 +369,8 @@ def test_workflow__remote_grib(fakefs):
     idxdata = Mock(ref={str(var): Mock(firstbyte=1, lastbyte=2)})
     path = fakefs / "foo.grib2"
     with patch.object(workflow, "fetch") as fetch:
-        workflow._remote_grib(idxdata, path, "task", "url", var)
-    fetch.assert_called_once_with("task", "url", path, {"Range": "bytes=1-2"})
+        workflow._remote_grib(idxdata, path, "taskname", "url", var)
+    fetch.assert_called_once_with("taskname", "url", path, {"Range": "bytes=1-2"})
 
 
 @mark.parametrize("cycle", [datetime(2024, 12, 19, 18, tzinfo=timezone.utc), None])
