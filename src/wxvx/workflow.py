@@ -25,7 +25,7 @@ from wxvx import variables
 from wxvx.metconf import render
 from wxvx.net import fetch
 from wxvx.times import TimeCoords, gen_validtimes, hh, tcinfo, yyyymmdd
-from wxvx.types import Cycles, Source
+from wxvx.types import Cycles, Proximity, Source
 from wxvx.util import LINETYPE, WXVXError, atomic, mpexec
 from wxvx.variables import VARMETA, Var, da_construct, da_select, ds_construct, metlevel
 
@@ -161,25 +161,24 @@ def _grib_index_file(outdir: Path, url: str):
 def _grid_grib(c: Config, tc: TimeCoords, var: Var):
     yyyymmdd, hh, leadtime = tcinfo(tc)
     url = c.baseline.url.format(yyyymmdd=yyyymmdd, hh=hh, fh=int(leadtime))
-    scheme, src = _classify_url(url)
-
-    def local():
-        taskname = "Baseline grid for %s using %s" % (var, src)
-        return taskname, src, None, None
-
-    def remote():
+    proximity, src = _classify_url(url)
+    if proximity == Proximity.LOCAL:
+        assert isinstance(src, Path)
+        yield "GRIB file %s providing %s grid" % (src, var)
+        yield asset(src, src.is_file)
+        yield None
+    else:
         outdir = c.paths.grids_baseline / yyyymmdd / hh / leadtime
         path = outdir / f"{var}.grib2"
         taskname = "Baseline grid %s" % path
-        idx = _grib_index_data(c, outdir, tc, url=f"{url}.idx")
-        return taskname, path, idx, lambda: _remote_grib(idx, path, taskname, url, var)
-
-    taskname, path, reqs, action = {"local": local, "remote": remote}[scheme]()
-    yield taskname
-    yield asset(path, path.is_file)
-    yield reqs
-    if action:
-        action()
+        yield taskname
+        yield asset(path, path.is_file)
+        idxdata = _grib_index_data(c, outdir, tc, url=f"{url}.idx")
+        yield idxdata
+        var_idx = idxdata.ref[str(var)]
+        fb, lb = var_idx.firstbyte, var_idx.lastbyte
+        headers = {"Range": "bytes=%s" % (f"{fb}-{lb}" if lb else fb)}
+        fetch(taskname, url, path, headers)
 
 
 @task
@@ -283,13 +282,13 @@ def _stat(c: Config, varname: str, tc: TimeCoords, var: Var, prefix: str, source
 # Support
 
 
-def _classify_url(url: str) -> tuple[str, str | Path]:
+def _classify_url(url: str) -> tuple[Proximity, str | Path]:
     p = urlparse(url)
     scheme = p.scheme
     if scheme in {"http", "https"}:
-        return "remote", url
+        return Proximity.REMOTE, url
     if scheme in {"file", ""}:
-        return "local", Path(p.path if scheme else url)
+        return Proximity.LOCAL, Path(p.path if scheme else url)
     msg = f"Scheme '{scheme}' in '{url}' not supported."
     raise WXVXError(msg)
 
@@ -362,13 +361,6 @@ def _prepare_plot_data(reqs: Sequence[Node], stat: str, width: int | None) -> pd
     if "INTERP_PNTS" in columns and width is not None:
         plot_data = plot_data[plot_data["INTERP_PNTS"] == width**2]
     return plot_data
-
-
-def _remote_grib(idxdata: Node, path: Path, taskname: str, url: str, var: Var):
-    var_idx = idxdata.ref[str(var)]
-    fb, lb = var_idx.firstbyte, var_idx.lastbyte
-    headers = {"Range": "bytes=%s" % (f"{fb}-{lb}" if lb else fb)}
-    fetch(taskname, url, path, headers)
 
 
 def _statargs(

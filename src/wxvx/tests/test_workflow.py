@@ -19,7 +19,7 @@ from pytest import fixture, mark, raises
 
 from wxvx import variables, workflow
 from wxvx.times import TimeCoords, gen_validtimes
-from wxvx.types import Source
+from wxvx.types import Proximity, Source
 from wxvx.variables import Var
 
 TESTDATA = {
@@ -304,9 +304,9 @@ def test_workflow__stat(c, fakefs, tc):
 @mark.parametrize(
     ("template", "expected_scheme"),
     [
-        ("http://link/to/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "remote"),
-        ("file://{root}/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "local"),
-        ("{root}/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "local"),
+        ("http://link/to/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", Proximity.REMOTE),
+        ("file://{root}/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", Proximity.LOCAL),
+        ("{root}/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", Proximity.LOCAL),
     ],
 )
 def test_workflow__classify_url(template, expected_scheme, fakefs):
@@ -362,15 +362,6 @@ def test_workflow__prepare_plot_data(dictkey):
         assert width is not None
         assert "INTERP_PNTS" in tdf.columns
         assert tdf["INTERP_PNTS"].eq(width**2).all()
-
-
-def test_workflow__remote_grib(fakefs):
-    var = Var("t", "isobaricInhPa", 900)
-    idxdata = Mock(ref={str(var): Mock(firstbyte=1, lastbyte=2)})
-    path = fakefs / "foo.grib2"
-    with patch.object(workflow, "fetch") as fetch:
-        workflow._remote_grib(idxdata, path, "taskname", "url", var)
-    fetch.assert_called_once_with("taskname", "url", path, {"Range": "bytes=1-2"})
 
 
 @mark.parametrize("cycle", [datetime(2024, 12, 19, 18, tzinfo=timezone.utc), None])
