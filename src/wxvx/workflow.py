@@ -160,26 +160,22 @@ def _grib_index_file(outdir: Path, url: str):
 @task
 def _grid_grib(c: Config, tc: TimeCoords, var: Var):
     yyyymmdd, hh, leadtime = tcinfo(tc)
-    outdir = c.paths.grids_baseline / yyyymmdd / hh / leadtime
-    path = outdir / f"{var}.grib2"
-    taskname = "Baseline grid %s" % path
-    yield taskname
     url = c.baseline.url.format(yyyymmdd=yyyymmdd, hh=hh, fh=int(leadtime))
-    url_type, src = _classify_url(url)
+    scheme, src = _classify_url(url)
 
     def local():
-        p = Path(src)
-        return p, _existing(p), None
+        taskname = "Baseline grid for %s using %s" % (var, src)
+        return taskname, src, None, None
 
     def remote():
+        outdir = c.paths.grids_baseline / yyyymmdd / hh / leadtime
+        path = outdir / f"{var}.grib2"
+        taskname = "Baseline grid %s" % path
         idx = _grib_index_data(c, outdir, tc, url=f"{url}.idx")
-        return path, idx, lambda: _remote_grib(idx, path, taskname, url, var)
+        return taskname, path, idx, lambda: _remote_grib(idx, path, taskname, url, var)
 
-    asset_path, reqs, action = {
-        "local": local,
-        "remote": remote,
-    }[url_type]()
-
+    taskname, asset_path, reqs, action = {"local": local, "remote": remote}[scheme]()
+    yield taskname
     yield asset(asset_path, asset_path.is_file)
     yield reqs
     action and action()
@@ -288,12 +284,12 @@ def _stat(c: Config, varname: str, tc: TimeCoords, var: Var, prefix: str, source
 
 def _classify_url(url: str) -> tuple[str, str | Path]:
     p = urlparse(url)
-    scheme = (p.scheme or "").lower()
+    scheme = p.scheme
     if scheme in {"http", "https"}:
         return "remote", url
     if scheme in {"file", ""}:
         return "local", Path(p.path if scheme else url)
-    msg = f"Scheme '{scheme}' in '{p.path}' not supported."
+    msg = f"Scheme '{scheme}' in '{url}' not supported."
     raise WXVXError(msg)
 
 

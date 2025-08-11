@@ -112,27 +112,6 @@ def test_workflow_stats(c, noop):
     assert len(val.ref) == len(c.variables) + 1  # for 2x SPFH levels
 
 
-CASES = [
-    ("http://x/y/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "remote"),
-    ("file://{root}/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "local"),
-    ("{root}/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "local"),
-]
-
-
-@mark.parametrize(("template", "expected_kind"), CASES, ids=["remote", "file-url", "plain-path"])
-def test_workflow__classify_url(template, expected_kind, tmp_path):
-    url = template.format(root=tmp_path.as_posix(), hh="00", fh=0)
-    kind, _ = workflow._classify_url(url)
-    assert kind == expected_kind
-
-
-def test_workflow__classify_url_unsupported(tmp_path):
-    file = f"ftp://{tmp_path.as_posix()}/gfs.t00z.pgrb2.0p25.f000"
-    with raises(workflow.WXVXError) as excinfo:
-        workflow._classify_url(file)
-    assert "not supported" in str(excinfo.value)
-
-
 def test_workflow__existing(fakefs):
     path = fakefs / "forecast"
     assert not ready(workflow._existing(path=path))
@@ -224,9 +203,7 @@ def test_workflow__grid_grib(c, tc):
 
 
 @mark.parametrize(
-    "template",
-    ["{root}/gfs.t00z.pgrb2.0p25.f000", "file://{root}/gfs.t00z.pgrb2.0p25.f000"],
-    ids=["plain", "file-url"],
+    "template", ["{root}/gfs.t00z.pgrb2.0p25.f000", "file://{root}/gfs.t00z.pgrb2.0p25.f000"]
 )
 def test_workflow__grid_grib_local(template, config_data, gen_config, fakefs, tc):
     grib_path = fakefs / "gfs.t00z.pgrb2.0p25.f000"
@@ -291,16 +268,6 @@ def test_workflow__plot(c, dictkey, fakefs, fs):
     xticks.assert_called_once_with(ticks=[0, 6, 12], labels=["000", "006", "012"], rotation=90)
 
 
-def test_workflow__remote_grib(tmp_path):
-    var = Var("t", "isobaricInhPa", 900)
-    idxdata = Mock(spec=Node)
-    idxdata.ref = {str(var): Mock(firstbyte=1, lastbyte=2)}
-    path = tmp_path / "out.grib2"
-    with patch.object(workflow, "fetch") as fetch:
-        workflow._remote_grib(idxdata, path, "task", "url", var)
-    fetch.assert_called_once_with("task", "url", path, {"Range": "bytes=1-2"})
-
-
 def test_workflow__stat(c, fakefs, tc):
     @external
     def mock(*_args, **_kwargs):
@@ -332,6 +299,27 @@ def test_workflow__stat(c, fakefs, tc):
 
 
 # Support Tests
+
+
+@mark.parametrize(
+    ("template", "expected_scheme"),
+    [
+        ("http://link/to/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "remote"),
+        ("file://{root}/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "local"),
+        ("{root}/gfs.t{hh}z.pgrb2.0p25.f{fh:03d}", "local"),
+    ],
+)
+def test_workflow__classify_url(template, expected_scheme, tmp_path):
+    url = template.format(root=tmp_path.as_posix(), hh="00", fh=0)
+    scheme, _ = workflow._classify_url(url)
+    assert scheme == expected_scheme
+
+
+def test_workflow__classify_url_unsupported(tmp_path):
+    url = f"foo://{tmp_path.as_posix()}/gfs.t00z.pgrb2.0p25.f000"
+    with raises(workflow.WXVXError) as e:
+        workflow._classify_url(url)
+    assert str(e.value) == f"Scheme 'foo' in '{url}' not supported."
 
 
 def test_workflow__grid_stat_config(c, fakefs):
@@ -374,6 +362,16 @@ def test_workflow__prepare_plot_data(dictkey):
         assert width is not None
         assert "INTERP_PNTS" in tdf.columns
         assert tdf["INTERP_PNTS"].eq(width**2).all()
+
+
+def test_workflow__remote_grib(tmp_path):
+    var = Var("t", "isobaricInhPa", 900)
+    idxdata = Mock(spec=Node)
+    idxdata.ref = {str(var): Mock(firstbyte=1, lastbyte=2)}
+    path = tmp_path / "out.grib2"
+    with patch.object(workflow, "fetch") as fetch:
+        workflow._remote_grib(idxdata, path, "task", "url", var)
+    fetch.assert_called_once_with("task", "url", path, {"Range": "bytes=1-2"})
 
 
 @mark.parametrize("cycle", [datetime(2024, 12, 19, 18, tzinfo=timezone.utc), None])
