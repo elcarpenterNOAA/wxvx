@@ -174,11 +174,12 @@ def _grid_grib(c: Config, tc: TimeCoords, var: Var):
         idx = _grib_index_data(c, outdir, tc, url=f"{url}.idx")
         return taskname, path, idx, lambda: _remote_grib(idx, path, taskname, url, var)
 
-    taskname, asset_path, reqs, action = {"local": local, "remote": remote}[scheme]()
+    taskname, path, reqs, action = {"local": local, "remote": remote}[scheme]()
     yield taskname
-    yield asset(asset_path, asset_path.is_file)
+    yield asset(path, path.is_file)
     yield reqs
-    action and action()
+    if action:
+        action()
 
 
 @task

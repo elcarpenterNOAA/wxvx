@@ -167,7 +167,20 @@ def test_workflow__grib_index_file(c):
     assert path.exists()
 
 
-def test_workflow__grid_grib(c, tc):
+@mark.parametrize(
+    "template", ["{root}/gfs.t00z.pgrb2.0p25.f000", "file://{root}/gfs.t00z.pgrb2.0p25.f000"]
+)
+def test_workflow__grid_grib_local(template, config_data, gen_config, fakefs, tc):
+    grib_path = fakefs / "gfs.t00z.pgrb2.0p25.f000"
+    grib_path.write_text("foo")
+    config_data["baseline"]["url"] = template.format(root=fakefs, hh="00", fh=0)
+    c = gen_config(config_data, fakefs)
+    var = variables.Var(name="t", level_type="isobaricInhPa", level=900)
+    val = workflow._grid_grib(c=c, tc=tc, var=var)
+    assert ready(val)
+
+
+def test_workflow__grid_grib_remote(c, tc):
     idxdata = {
         "gh-isobaricInhPa-0900": variables.HRRR(
             name="HGT", levstr="900 mb", firstbyte=0, lastbyte=0
@@ -200,19 +213,6 @@ def test_workflow__grid_grib(c, tc):
     outdir = c.paths.grids_baseline / tc.yyyymmdd / tc.hh / f"{fh:03d}"
     url = f"https://some.url/{yyyymmdd}/{hh}/{fh:02d}/a.grib2.idx"
     _grib_index_data.assert_called_with(c, outdir, tc, url=url)
-
-
-@mark.parametrize(
-    "template", ["{root}/gfs.t00z.pgrb2.0p25.f000", "file://{root}/gfs.t00z.pgrb2.0p25.f000"]
-)
-def test_workflow__grid_grib_local(template, config_data, gen_config, fakefs, tc):
-    grib_path = fakefs / "gfs.t00z.pgrb2.0p25.f000"
-    grib_path.write_text("foo")
-    config_data["baseline"]["url"] = template.format(root=fakefs, hh="00", fh=0)
-    c = gen_config(config_data, fakefs)
-    var = variables.Var(name="t", level_type="isobaricInhPa", level=900)
-    val = workflow._grid_grib(c=c, tc=tc, var=var)
-    assert ready(val)
 
 
 def test_workflow__grid_nc(c_real_fs, check_cf_metadata, da_with_leadtime, tc):
@@ -366,9 +366,8 @@ def test_workflow__prepare_plot_data(dictkey):
 
 def test_workflow__remote_grib(tmp_path):
     var = Var("t", "isobaricInhPa", 900)
-    idxdata = Mock(spec=Node)
-    idxdata.ref = {str(var): Mock(firstbyte=1, lastbyte=2)}
-    path = tmp_path / "out.grib2"
+    idxdata = Mock(ref={str(var): Mock(firstbyte=1, lastbyte=2)})
+    path = tmp_path / "foo.grib2"
     with patch.object(workflow, "fetch") as fetch:
         workflow._remote_grib(idxdata, path, "task", "url", var)
     fetch.assert_called_once_with("task", "url", path, {"Range": "bytes=1-2"})
