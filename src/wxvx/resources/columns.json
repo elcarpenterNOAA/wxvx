@@ -235,7 +235,7 @@
     "UFSS_BCL": "REAL",
     "UFSS_BCU": "REAL",
     "VERSION": "TEXT",
-    "VX_MASK": "TEXT",
+    "VX_MASK": "TEXT"
   },
   "wxvx": {
     "cycle": "TEXT",
