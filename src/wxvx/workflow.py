@@ -304,7 +304,7 @@ def _db_con(path: Path):
     dbfile = _db_file(path)
     yield dbfile
     assert sqlite3.threadsafety == 3
-    ref.append(sqlite3.connect(dbfile.ref))
+    ref.append(sqlite3.connect(dbfile.ref, check_same_thread=False))
 
 
 @task
@@ -325,10 +325,10 @@ def _db_file(path: Path):
 @task
 def _db_row(c: Config, stat_req: Node):
     txtfiles = set()
-    for stat, _ in _stats_widths(c, stat_req.ref.varname):
+    meta = stat_req.ref["stat"]
+    for stat, _ in _stats_widths(c, meta.varname):
         linetype = LINETYPE[stat]
-        txtfiles.add(str(stat_req.ref.path).replace(".stat", f"_{linetype}.txt"))
-    meta = stat_req.ref
+        txtfiles.add(str(stat_req.ref[linetype]))
     source = (
         c.forecast
         if meta.source is Source.FORECAST
@@ -601,7 +601,9 @@ def _stats_vs_grid(c: Config, varname: str, tc: TimeCoords, var: Var, prefix: st
     yyyymmdd_valid, hh_valid, _ = tcinfo(TimeCoords(tc.validtime))
     template = "grid_stat_%s_%02d0000L_%s_%s0000V.stat"
     path = rundir / (template % (prefix, int(leadtime), yyyymmdd_valid, hh_valid))
-    yield Asset(ns(path=path, source=source, tc=tc, var=var, varname=varname), path.is_file)
+    varmeta = _varmeta(c, varname)
+    linetypes = sorted({LINETYPE[x] for x in varmeta.met_stats})
+    yield _stat_assets(path, linetypes, source=source, tc=tc, var=var, varname=varname)
     if source == Source.FORECAST:
         location = Path(render(c.forecast.path, tc, context=c.raw))
         fcst, datafmt = _forecast_grid(location, c, varname, tc, var)
@@ -640,7 +642,7 @@ def _stats_vs_obs(c: Config, varname: str, tc: TimeCoords, var: Var, prefix: str
     template = "point_stat_%s_%02d0000L_%s_%s0000V.stat"
     yyyymmdd_valid, hh_valid, _ = tcinfo(TimeCoords(tc.validtime))
     path = rundir / (template % (prefix, int(leadtime), yyyymmdd_valid, hh_valid))
-    yield Asset(ns(path=path, source=source, tc=tc, var=var, varname=varname), path.is_file)
+    yield _stat_assets(path, [MET.cnt], source=source, tc=tc, var=var, varname=varname)
     obs = _netcdf_from_obs(c, TimeCoords(tc.validtime))
     reqs: list[Node] = [obs]
     if source is Source.FORECAST:
@@ -811,7 +813,7 @@ def _met_mask(polyfile: Node | None) -> dict[str, list[str]]:
 
 def _prepare_plot_data(reqs: Sequence[Node], stat: str, width: int | None) -> pd.DataFrame:
     linetype = LINETYPE[stat]
-    files = [str(x.ref.path).replace(".stat", f"_{linetype}.txt") for x in reqs]
+    files = [str(x.ref[linetype]) for x in reqs]
     columns = [MET.MODEL, MET.FCST_LEAD, stat]
     if linetype in [MET.cts, MET.nbrcnt]:
         columns.append(MET.FCST_THRESH)
@@ -842,6 +844,22 @@ def _regrid_width(c: Config) -> int:
     except KeyError as e:
         msg = "Could not determine 'width' value for regrid method '%s'" % c.regrid.method
         raise WXVXError(msg) from e
+
+
+def _stat_assets(
+    path: Path,
+    linetypes: Sequence[str],
+    source: Source,
+    tc: TimeCoords,
+    var: Var,
+    varname: str,
+) -> dict[str, Asset]:
+    txt = lambda lt: path.parent / f"{path.stem}_{lt}.txt"
+    meta = ns(path=path, source=source, tc=tc, var=var, varname=varname)
+    return {
+        "stat": Asset(meta, path.is_file),
+        **{lt: Asset(txt(lt), txt(lt).is_file) for lt in linetypes},
+    }
 
 
 def _stat_args(
