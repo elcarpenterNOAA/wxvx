@@ -3,9 +3,10 @@ Tests for wxvx.workflow.
 """
 
 import os
+import sqlite3
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from textwrap import dedent, indent
 from types import SimpleNamespace as ns
@@ -22,7 +23,7 @@ from wxvx.config import Config, _force
 from wxvx.strings import EC, MET, NOAA, S
 from wxvx.tests.support import with_del
 from wxvx.times import TimeCoords, gen_timecoords, tcinfo
-from wxvx.util import DataFormat, TruthType, WXVXError, resource_path
+from wxvx.util import LINETYPE, DataFormat, TruthType, WXVXError, resource_path
 from wxvx.variables import Var
 
 Source = workflow.Source
@@ -139,7 +140,13 @@ def test_workflow_metstats(c):
     # x 3 leadtimes
     # x 5 varlevels (gh, refc, 2t x 1 level + q x 2 levels)
     # = 60 MET stat runs
-    assert len(workflow.metstats(c=c).ref) == 60
+    # Each run yields 1 .stat + n linetype .txt assets per unique linetype:
+    #   gh:   cnt         -> 2 assets
+    #   refc: cts, nbrcnt -> 3 assets
+    #   q:    cnt         -> 2 assets (x2 levels)
+    #   2t:   cnt         -> 2 assets
+    # = 12 x (2 + 3 + 2 + 2 + 2) = 132 assets
+    assert len(workflow.metstats(c=c).ref) == 132
 
 
 def test_workflow_ncobs(c, obs_info):
@@ -472,6 +479,32 @@ def test_workflow__cycle_leadtimes_map__timepairs_dedup(config_data, fakefs, gen
     assert workflow._cycle_leadtimes_map(c) == expected
 
 
+def test_workflow__db_con(tmp_path):
+    path = tmp_path / "wxvx.db"
+    node = workflow._db_con(path=path)
+    assert node.ready
+    con = node.ref[0]
+    assert isinstance(con, sqlite3.Connection)
+    cur = con.execute("select name from sqlite_master where type='table'")
+    assert cur.fetchone()[0] == "stats"
+    con.close()
+
+
+def test_workflow__db_file(tmp_path):
+    path = tmp_path / "wxvx.db"
+    assert not path.is_file()
+    node = workflow._db_file(path=path)
+    assert node.ready
+    assert path.is_file()
+    con = sqlite3.connect(path)
+    cur = con.execute("pragma table_info(stats)")
+    columns = {row[1]: row[2] for row in cur.fetchall()}
+    con.close()
+    expected_wxvx = {"cycle", "leadtime", "level", "leveltype", "model", "validtime", "varname"}
+    expected_met = {"RMSE", "PODY", "FSS", "FCST_LEAD", "TOTAL", "VERSION"}
+    assert expected_wxvx | expected_met <= set(columns)
+
+
 def test_workflow__existing(fakefs):
     path = fakefs / S.forecast
     assert not workflow._existing(path=path).ready
@@ -723,7 +756,10 @@ def test_workflow__stats_vs_grid(c, datafmt, fakefs, mask, source, tc, testvars)
     )
     kwargs = dict(c=c, varname=NOAA.T2M, tc=tc, var=testvars[EC.t2], prefix="foo", source=source)
     with patch.object(workflow, "classify_data_format", return_value=datafmt):
-        stat = taskfunc(**kwargs, dry_run=True).ref.path
+        refs = taskfunc(**kwargs, dry_run=True).ref
+        assert "stat" in refs
+        assert MET.cnt in refs
+        stat = refs["stat"].path
         cfgfile = stat.with_suffix(".config")
         runscript = stat.with_suffix(".sh")
         assert not stat.is_file()
@@ -761,7 +797,10 @@ def test_workflow__stats_vs_obs(c, datafmt, fakefs, mask, source, tc, testvars):
         c.forecast._mask = None
     kwargs = dict(c=c, varname=NOAA.T2M, tc=tc, var=var, prefix="foo", source=source)
     with patch.object(workflow, "classify_data_format", return_value=datafmt):
-        stat = workflow._stats_vs_obs(**kwargs, dry_run=True).ref.path
+        refs = workflow._stats_vs_obs(**kwargs, dry_run=True).ref
+        assert "stat" in refs
+        assert MET.cnt in refs
+        stat = refs["stat"].path
         cfgfile = stat.with_suffix(".config")
         runscript = stat.with_suffix(".sh")
         assert not stat.is_file()
@@ -1022,7 +1061,8 @@ def test_workflow__met_mask__no_polyfile():
 @mark.parametrize("dictkey", ["foo", "bar", "baz"])
 def test_workflow__prepare_plot_data(dictkey):
     _, _, dfs, stat, width = TESTDATA[dictkey]
-    node = lambda x: Mock(ref=ns(path=f"{x}.stat"), taskname=x)
+    linetype = LINETYPE[stat]
+    node = lambda x: Mock(ref={linetype: f"{x}_{linetype}.txt"}, taskname=x)
     reqs = cast(Sequence[Node], [node("node1"), node("node2")])
     with patch.object(workflow.pd, "read_csv", side_effect=dfs):
         tdf = workflow._prepare_plot_data(reqs=reqs, stat=stat, width=width)
@@ -1072,6 +1112,29 @@ def test_workflow__stat_args(c, statkit, utc):
     assert list(stat_args) == [
         (c, statkit.varname, tc, statkit.var, statkit.prefix, statkit.source)
     ]
+
+
+def test_workflow__stat_assets(tmp_path):
+    path = tmp_path / "grid_stat_foo_060000L_19700101_000000V.stat"
+    linetypes = [MET.cnt, MET.nbrcnt]
+    tc = TimeCoords(cycle=datetime(1970, 1, 1, tzinfo=timezone.utc), leadtime=timedelta(hours=6))
+    var = Var("t2", "heightAboveGround", 2)
+    assets = workflow._stat_assets(
+        path=path, linetypes=linetypes, source=Source.FORECAST, tc=tc, var=var, varname="TMP"
+    )
+    assert set(assets) == {"stat", MET.cnt, MET.nbrcnt}
+    assert assets["stat"].ref.path == path
+    assert assets["stat"].ref.source is Source.FORECAST
+    assert assets["stat"].ref.varname == "TMP"
+    assert assets[MET.cnt].ref == tmp_path / "grid_stat_foo_060000L_19700101_000000V_cnt.txt"
+    assert assets[MET.nbrcnt].ref == tmp_path / "grid_stat_foo_060000L_19700101_000000V_nbrcnt.txt"
+    assert not assets["stat"].ready()
+    assert not assets[MET.cnt].ready()
+    path.touch()
+    assert assets["stat"].ready()
+    assert not assets[MET.cnt].ready()
+    assets[MET.cnt].ref.touch()
+    assert assets[MET.cnt].ready()
 
 
 @mark.parametrize("baseline_name", [S.HRRR, S.truth, None])
