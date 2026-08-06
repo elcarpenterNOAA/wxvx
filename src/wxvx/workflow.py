@@ -180,8 +180,13 @@ def stats(c: Config):
     reqs: list[Node] = []
     for varname, level in _varnames_levels(c):
         for cycle, leadtimes in _cycle_leadtimes_map(c).items():
-            stat_reqs = _stat_reqs(c, varname, level, cycle, leadtimes)
-            reqs.extend(_db_row(c, stat_req) for stat_req in stat_reqs)
+            for stat_req in _stat_reqs(c, varname, level, cycle, leadtimes):
+                meta = stat_req.ref["stat"]
+                reqs.extend(
+                    _db_row(c, meta, lt, stat_req.ref[lt], stat_req)
+                    for lt in stat_req.ref
+                    if lt != "stat"
+                )
     yield reqs
 
 
@@ -323,12 +328,7 @@ def _db_file(path: Path):
 
 
 @task
-def _db_row(c: Config, stat_req: Node):
-    txtfiles = set()
-    meta = stat_req.ref["stat"]
-    for stat, _ in _stats_widths(c, meta.varname):
-        linetype = LINETYPE[stat]
-        txtfiles.add(str(stat_req.ref[linetype]))
+def _db_row(c: Config, meta: ns, linetype: str, txtfile: Path, stat_req: Node):
     source = (
         c.forecast
         if meta.source is Source.FORECAST
@@ -340,7 +340,7 @@ def _db_row(c: Config, stat_req: Node):
     cyclestr = f"{yyyymmdd(meta.tc.cycle)} {hh(meta.tc.cycle)}Z"
     vardesc = _varmeta(c, meta.varname).description.format(level=meta.var.level)
     leadtime = hms(meta.tc.leadtime)
-    taskname = "Database row %s %s %s %s" % (model, vardesc, cyclestr, leadtime)
+    taskname = "Database row %s %s %s %s %s" % (model, vardesc, cyclestr, leadtime, txtfile.name)
     yield taskname
     cycle = meta.tc.cycle.isoformat()
     stmt = (
@@ -349,6 +349,7 @@ def _db_row(c: Config, stat_req: Node):
         " and leadtime = ?"
         " and level = ?"
         " and leveltype = ?"
+        " and LINE_TYPE = ?"
         " and model = ?"
         " and varname = ?"
     )
@@ -357,6 +358,7 @@ def _db_row(c: Config, stat_req: Node):
         leadtime,
         meta.var.level,
         meta.var.level_type,
+        linetype.upper(),
         model,
         meta.var.name,
     )
@@ -364,19 +366,19 @@ def _db_row(c: Config, stat_req: Node):
     ready = lambda: dbcon.ready and not pd.read_sql(sql=stmt, con=dbcon.ref[0], params=params).empty
     yield Asset(None, ready)
     yield [dbcon, stat_req]
-    for txtfile in txtfiles:
-        df = pd.read_csv(txtfile, sep=r"\s+")
-        df = df.drop(columns=["SI_BCL.1"])
-        custom_fields = {
-            "cycle": cycle,
-            "leadtime": leadtime,
-            "level": meta.var.level,
-            "leveltype": meta.var.level_type,
-            "validtime": meta.tc.validtime,
-            "varname": meta.var.name,
-        }
-        df = df.assign(**custom_fields)
-        df.to_sql(name="stats", con=dbcon.ref[0], if_exists="append", index=False)
+    df = pd.read_csv(txtfile, sep=r"\s+")
+    df = df.drop(columns=["MODEL", "SI_BCL.1"])
+    custom_fields = {
+        "cycle": cycle,
+        "leadtime": leadtime,
+        "level": meta.var.level,
+        "leveltype": meta.var.level_type,
+        "model": model,
+        "validtime": meta.tc.validtime,
+        "varname": meta.var.name,
+    }
+    df = df.assign(**custom_fields)
+    df.to_sql(name="stats", con=dbcon.ref[0], if_exists="append", index=False)
 
 
 @external

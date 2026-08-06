@@ -167,6 +167,19 @@ def test_workflow_plots(c, noop):
     )
 
 
+def test_workflow_stats(c, noop):
+    with patch.object(workflow, "_db_row", noop):
+        node = workflow.stats(c=c)
+    # 60 stat runs, each yielding one _db_row per linetype:
+    #   gh:   cnt         -> 1
+    #   refc: cts, nbrcnt -> 2
+    #   q:    cnt         -> 1 (x2 levels)
+    #   2t:   cnt         -> 1
+    # Per source/cycle/leadtime: (1 + 2 + 1 + 1 + 1) = 6 linetypes
+    # x 2 sources x 2 cycles x 3 leadtimes = 72 _db_row nodes
+    assert len(node.ref) == 72
+
+
 @mark.parametrize("source", [Source.FORECAST, Source.TRUTH])
 def test_workflow__config_grid_stat(c, source, fakefs, testvars):
     path = fakefs / "refc.config"
@@ -503,6 +516,43 @@ def test_workflow__db_file(tmp_path):
     expected_wxvx = {"cycle", "leadtime", "level", "leveltype", "model", "validtime", "varname"}
     expected_met = {"RMSE", "PODY", "FSS", "FCST_LEAD", "TOTAL", "VERSION"}
     assert expected_wxvx | expected_met <= set(columns)
+
+
+def test_workflow__db_row(c_real_fs):
+    c = c_real_fs
+    tc = TimeCoords(cycle=datetime(1970, 1, 1, tzinfo=timezone.utc), leadtime=timedelta(hours=6))
+    var = Var(NOAA.T2M, "heightAboveGround", 2)
+    meta = ns(source=Source.FORECAST, tc=tc, var=var, varname=NOAA.T2M)
+    txtfile = c.paths.run / "point_stat_foo_060000L_19700101_060000V_cnt.txt"
+    txtfile.parent.mkdir(parents=True, exist_ok=True)
+    txtfile.write_text(
+        "VERSION MODEL FCST_LEAD LINE_TYPE TOTAL ME RMSE SI_BCL SI_BCL.1\n"
+        "V12.0 ForecastModel 60000 CNT 100 0.5 1.2 0.1 0.1\n"
+    )
+
+    @external
+    def mock_stat_req():
+        yield "mock"
+        yield Asset(None, lambda: True)
+
+    stat_req = mock_stat_req()
+    node = workflow._db_row(c=c, meta=meta, linetype=MET.cnt, txtfile=txtfile, stat_req=stat_req)
+    assert node.ready
+    dbpath = c.paths.run / "wxvx.db"
+    con = sqlite3.connect(dbpath)
+    rows = con.execute("select * from stats").fetchall()
+    assert len(rows) == 1
+    cols = [desc[0] for desc in con.execute("select * from stats").description]
+    row = dict(zip(cols, rows[0], strict=True))
+    assert row["cycle"] == "1970-01-01T00:00:00"
+    assert row["leadtime"] == "6:00:00"
+    assert row["level"] == 2
+    assert row["leveltype"] == "heightAboveGround"
+    assert row["model"] == "Forecast Model"
+    assert row["varname"] == NOAA.T2M
+    assert row["LINE_TYPE"] == "CNT"
+    assert row["ME"] == 0.5
+    con.close()
 
 
 def test_workflow__existing(fakefs):
